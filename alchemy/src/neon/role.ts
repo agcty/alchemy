@@ -184,15 +184,10 @@ export const NeonRole = Resource(
       case "update": {
         if (
           this.output.projectId !== projectId ||
-          this.output.branchId !== branchId
+          this.output.branchId !== branchId ||
+          this.output.name !== name
         ) {
           this.replace();
-        }
-
-        if (this.output.name !== name) {
-          throw new Error(
-            `Cannot change role name from '${this.output.name}' to '${name}'. Role name is immutable after creation.`,
-          );
         }
 
         // Roles don't have an update endpoint, so we return the current state
