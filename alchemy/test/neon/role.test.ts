@@ -40,7 +40,7 @@ describe("NeonRole Resource", () => {
         projectId: project.id,
         branchId: branch.id,
         password: expect.any(Object),
-        protected: false,
+        noLogin: false,
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
       });
@@ -71,7 +71,7 @@ describe("NeonRole Resource", () => {
     }
   });
 
-  test("create protected role", async (scope) => {
+  test("create no-login role", async (scope) => {
     let project: NeonProject | undefined;
     let branch: NeonBranch | undefined;
     let role: NeonRole | undefined;
@@ -84,18 +84,18 @@ describe("NeonRole Resource", () => {
         endpoints: [{ type: "read_write" }],
       });
 
-      // Create protected role
-      role = await NeonRole("protected-role", {
+      // Create no-login role
+      role = await NeonRole("no-login-role", {
         project: project.id,
         branch: branch.id,
-        protected: true,
+        noLogin: true,
       });
 
       expect(role).toMatchObject({
         name: expect.any(String),
         projectId: project.id,
         branchId: branch.id,
-        protected: true,
+        noLogin: true,
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
       });

@@ -26,7 +26,7 @@ export interface NeonRoleProps extends NeonApiOptions {
    * Whether to create a role that cannot login.
    * @default false
    */
-  protected?: boolean;
+  noLogin?: boolean;
 }
 
 export type NeonRole = Omit<NeonRoleProps, "project"> & {
@@ -49,7 +49,7 @@ export type NeonRole = Omit<NeonRoleProps, "project"> & {
   /**
    * Whether the role cannot login (no_login flag)
    */
-  protected: boolean;
+  noLogin: boolean;
   /**
    * A timestamp indicating when the role was created
    */
@@ -77,11 +77,11 @@ export type NeonRole = Omit<NeonRoleProps, "project"> & {
  *   branch: "branch-id",
  * });
  *
- * console.log(`Password: ${role.password.value}`);
+ * console.log(`Password: ${role.password.unencrypted}`);
  * ```
  *
  * @example
- * ## Protected Role
+ * ## No-Login Role
  *
  * Create a role that cannot login (useful for ownership):
  *
@@ -89,7 +89,7 @@ export type NeonRole = Omit<NeonRoleProps, "project"> & {
  * const role = await NeonRole("owner", {
  *   project: "project-id",
  *   branch: "branch-id",
- *   protected: true,
+ *   noLogin: true,
  * });
  * ```
  *
@@ -153,7 +153,7 @@ export const NeonRole = Resource(
           body: {
             role: {
               name,
-              no_login: props.protected,
+              no_login: props.noLogin,
             },
           },
         });
@@ -176,7 +176,7 @@ export const NeonRole = Resource(
           branchId,
           branch: props.branch,
           password: new Secret(passwordRes.data.password),
-          protected: props.protected ?? false,
+          noLogin: props.noLogin ?? false,
           createdAt: new Date(data.role.created_at),
           updatedAt: new Date(data.role.updated_at),
         };

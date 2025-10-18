@@ -45,9 +45,9 @@ const role = await NeonRole("api-user", {
 console.log("Connection ready for:", role.name);
 ```
 
-## Protected Role
+## No-Login Role
 
-Create a protected role that cannot be used for login (useful for ownership and permissions):
+Create a role that cannot be used for login (useful for ownership and permissions):
 
 ```ts
 import { NeonProject, NeonBranch, NeonRole } from "alchemy/neon";
@@ -64,7 +64,7 @@ const branch = await NeonBranch("main", {
 const owner = await NeonRole("owner", {
   project,
   branch,
-  protected: true, // Cannot be used for login
+  noLogin: true, // Cannot be used for login
 });
 
 console.log("Owner role created:", owner.name);
@@ -199,7 +199,7 @@ console.log("Password (decrypted at runtime):", role.password.unencrypted);
 | `project` | `string \| NeonProject` | Yes | The project containing the branch |
 | `branch` | `string \| NeonBranch` | Yes | The branch to create the role in |
 | `name` | `string` | No | Role name (max 63 bytes, default: `${app}-${stage}-${id}`) |
-| `protected` | `boolean` | No | Whether to create a role that cannot login (default: `false`) |
+| `noLogin` | `boolean` | No | Whether to create a role that cannot login (default: `false`) |
 | `apiKey` | `Secret` | No | Neon API key (overrides `NEON_API_KEY` env var) |
 
 ### Output Properties (NeonRole)
@@ -211,7 +211,7 @@ console.log("Password (decrypted at runtime):", role.password.unencrypted);
 | `branchId` | `string` | The branch ID this role belongs to |
 | `branch` | `string \| NeonBranch` | The branch reference from input |
 | `password` | `Secret` | The role password (encrypted in state) |
-| `protected` | `boolean` | Whether the role is system-protected |
+| `noLogin` | `boolean` | Whether the role cannot login |
 | `createdAt` | `Date` | When the role was created |
 | `updatedAt` | `Date` | When the role was last updated |
 
@@ -237,7 +237,7 @@ These properties cannot be changed after creation (they trigger replacement):
 - `project` / `projectId`
 - `branch` / `branchId`
 - `name`
-- `protected`
+- `noLogin`
 
 Roles do not have an update endpoint in the Neon API, so attempting to update a role will either keep the existing state or trigger a replacement.
 
@@ -248,9 +248,9 @@ Role names:
 - Must be unique within the branch
 - Cannot be changed after creation
 
-### Protected Roles
+### No-Login Roles
 
-Protected roles (`protected: true`) cannot be used to log into the database. They are useful for:
+No-login roles (`noLogin: true`) cannot be used to log into the database. They are useful for:
 - Ownership of database objects
 - Role hierarchies and permission inheritance
 - System roles that shouldn't have direct login access
