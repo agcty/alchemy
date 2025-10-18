@@ -45,7 +45,7 @@ export type NeonRole = Omit<NeonRoleProps, "project"> & {
   /**
    * The role password
    */
-  password: Secret;
+  password: Secret<string>;
   /**
    * Whether the role cannot login (no_login flag)
    */
@@ -67,10 +67,6 @@ export type NeonRole = Omit<NeonRoleProps, "project"> & {
  * with login credentials that can be used to connect to the database.
  *
  * @example
- * ## Basic Role
- *
- * Create a role in a branch:
- *
  * ```ts
  * const role = await NeonRole("app-role", {
  *   project: "project-id",
@@ -81,10 +77,6 @@ export type NeonRole = Omit<NeonRoleProps, "project"> & {
  * ```
  *
  * @example
- * ## No-Login Role
- *
- * Create a role that cannot login (useful for ownership):
- *
  * ```ts
  * const role = await NeonRole("owner", {
  *   project: "project-id",
@@ -94,10 +86,6 @@ export type NeonRole = Omit<NeonRoleProps, "project"> & {
  * ```
  *
  * @example
- * ## Using with Branch
- *
- * Create a role using a Branch resource:
- *
  * ```ts
  * const branch = await NeonBranch("dev", {
  *   project: "project-id",
