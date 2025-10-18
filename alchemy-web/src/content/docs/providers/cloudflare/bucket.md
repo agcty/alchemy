@@ -65,6 +65,34 @@ console.log(publicBucket.domain); // [random-id].r2.dev
 
 This enables the `r2.dev` domain for the bucket. This URL is rate-limited and not recommended for production use.
 
+## With Custom Domain
+
+Serve bucket content through your own domain with automatic DNS configuration:
+
+```ts
+import { R2Bucket } from "alchemy/cloudflare";
+
+const cdnBucket = await R2Bucket("cdn-assets", {
+  name: "cdn-assets",
+  customDomain: {
+    domain: "cdn.example.com",
+    zoneId: "your-zone-id", // Cloudflare Zone ID
+    enabled: true,
+    minTLS: "1.2", // Minimum TLS version (1.0, 1.1, 1.2, 1.3)
+  },
+});
+
+// DNS record is automatically created as a proxied CNAME to public.r2.dev
+console.log(cdnBucket.customDomain?.domain); // "cdn.example.com"
+```
+
+The custom domain feature:
+
+- Automatically creates a proxied CNAME DNS record pointing to `public.r2.dev`
+- Handles DNS record cleanup when the custom domain is removed
+- Supports TLS configuration and cipher suite customization
+- Provides ownership verification and SSL certificate status
+
 ## With CORS
 
 Create a bucket with CORS rules:
@@ -209,7 +237,6 @@ const bucket = await R2Bucket("my-bucket", {
   name: "my-bucket",
 });
 ```
-
 
 ### `head`
 

@@ -7,6 +7,7 @@ import { Scope } from "../scope.ts";
 import { streamToBuffer } from "../serde.ts";
 import { isRetryableError } from "../state/r2-rest-state-store.ts";
 import { withExponentialBackoff } from "../util/retry.ts";
+import { logger } from "../util/logger.ts";
 import { CloudflareApiError, handleApiError } from "./api-error.ts";
 import {
   extractCloudflareResult,
@@ -21,6 +22,38 @@ import { deleteMiniflareBinding } from "./miniflare/delete.ts";
 import { getDefaultPersistPath } from "./miniflare/paths.ts";
 
 export type R2BucketJurisdiction = "default" | "eu" | "fedramp";
+
+/**
+ * Configuration for R2 Bucket custom domain
+ */
+export interface R2BucketCustomDomain {
+  /**
+   * The custom domain name (e.g., "cdn.example.com")
+   */
+  domain: string;
+
+  /**
+   * Cloudflare Zone ID for the domain
+   */
+  zoneId: string;
+
+  /**
+   * Whether the custom domain is enabled
+   * @default true
+   */
+  enabled?: boolean;
+
+  /**
+   * Minimum TLS version for the custom domain
+   * @default "1.0"
+   */
+  minTLS?: "1.0" | "1.1" | "1.2" | "1.3";
+
+  /**
+   * List of cipher suites to use for the custom domain
+   */
+  ciphers?: string[];
+}
 
 /**
  * Properties for creating or updating an R2 Bucket
@@ -97,6 +130,12 @@ export interface BucketProps extends CloudflareApiOptions {
    * Enable data catalog for bucket
    */
   dataCatalog?: boolean;
+
+  /**
+   * Custom domain configuration for the bucket
+   * Allows serving bucket content through your own domain
+   */
+  customDomain?: R2BucketCustomDomain;
 
   /**
    * Whether to emulate the bucket locally when Alchemy is running in watch mode.
@@ -373,6 +412,30 @@ type _R2Bucket = Omit<BucketProps, "delete" | "dev"> & {
      */
     host: string;
   };
+
+  /**
+   * Custom domain configuration for the bucket
+   */
+  customDomain?: R2BucketCustomDomain & {
+    /**
+     * Status information for the custom domain
+     */
+    status?: {
+      /**
+       * Ownership verification status
+       */
+      ownership?: string;
+      /**
+       * SSL certificate status
+       */
+      ssl?: string;
+    };
+    /**
+     * DNS record ID for the custom domain
+     * @internal
+     */
+    dnsRecordId?: string;
+  };
 };
 
 export function isBucket(resource: any): resource is R2Bucket {
@@ -421,7 +484,23 @@ export function isBucket(resource: any): resource is R2Bucket {
  *   empty: true  // All objects will be deleted when this resource is destroyed
  * });
  *
+ * @example
+ * // Create a bucket with a custom domain (DNS record is automatically created)
+ * const cdnBucket = await R2Bucket("cdn-assets", {
+ *   name: "cdn-assets",
+ *   customDomain: {
+ *     domain: "cdn.example.com",
+ *     zoneId: "your-zone-id",
+ *     enabled: true,
+ *     minTLS: "1.2"
+ *   }
+ * });
+ *
+ * // Access the bucket via custom domain
+ * console.log(cdnBucket.customDomain?.domain); // "cdn.example.com"
+ *
  * @see https://developers.cloudflare.com/r2/buckets/
+ * @see https://developers.cloudflare.com/rules/origin-rules/tutorials/point-to-r2-bucket-with-custom-domain/
  */
 export async function R2Bucket(
   id: string,
@@ -621,6 +700,22 @@ const _R2Bucket = Resource(
 
     if (this.phase === "delete") {
       if (props.delete !== false) {
+        if (this.output?.customDomain) {
+          // Delete DNS record if it was created
+          if (this.output.customDomain.dnsRecordId) {
+            await deleteR2CustomDomainDnsRecord(
+              api,
+              this.output.customDomain.zoneId,
+              this.output.customDomain.dnsRecordId,
+            );
+          }
+          await deleteCustomDomain(
+            api,
+            bucketName,
+            this.output.customDomain.domain,
+            props,
+          );
+        }
         if (this.output?.catalog) {
           await disableDataCatalog(api, bucketName);
         }
@@ -673,6 +768,35 @@ const _R2Bucket = Resource(
       if (props.dataCatalog) {
         dataCatalog = await enableDataCatalog(api, bucketName);
       }
+      let customDomainResult:
+        | (R2BucketCustomDomain & {
+            status?: { ownership?: string; ssl?: string };
+            dnsRecordId?: string;
+          })
+        | undefined;
+      if (props.customDomain) {
+        const result = await createCustomDomain(
+          api,
+          bucketName,
+          props.customDomain,
+          props,
+        );
+        const dnsRecordId = await createR2CustomDomainDnsRecord(
+          api,
+          props.customDomain.zoneId,
+          props.customDomain.domain,
+          bucketName,
+        );
+        customDomainResult = {
+          domain: result.domain,
+          zoneId: result.zoneId ?? props.customDomain.zoneId,
+          enabled: result.enabled,
+          minTLS: result.minTLS as R2BucketCustomDomain["minTLS"],
+          ciphers: result.ciphers,
+          status: result.status,
+          dnsRecordId,
+        };
+      }
       return {
         name: bucketName,
         location: bucket.location,
@@ -687,6 +811,7 @@ const _R2Bucket = Resource(
         cors: props.cors,
         dev,
         catalog: dataCatalog,
+        customDomain: customDomainResult,
       };
     } else {
       if (bucketName !== this.output.name) {
@@ -721,6 +846,136 @@ const _R2Bucket = Resource(
       if (!isDeepStrictEqual(this.output.lock ?? [], props.lock ?? [])) {
         await putBucketLockRules(api, bucketName, props);
       }
+
+      // Handle custom domain updates
+      let customDomainResult = this.output.customDomain;
+      if (
+        props.customDomain &&
+        !isDeepStrictEqual(
+          this.output.customDomain
+            ? {
+                domain: this.output.customDomain.domain,
+                zoneId: this.output.customDomain.zoneId,
+                enabled: this.output.customDomain.enabled,
+                minTLS: this.output.customDomain.minTLS,
+                ciphers: this.output.customDomain.ciphers,
+              }
+            : undefined,
+          {
+            domain: props.customDomain.domain,
+            zoneId: props.customDomain.zoneId,
+            enabled: props.customDomain.enabled ?? true,
+            minTLS: props.customDomain.minTLS,
+            ciphers: props.customDomain.ciphers,
+          },
+        )
+      ) {
+        if (
+          this.output.customDomain &&
+          this.output.customDomain.domain !== props.customDomain.domain
+        ) {
+          // Domain name changed, delete old DNS record and custom domain, then create new ones
+          if (this.output.customDomain.dnsRecordId) {
+            await deleteR2CustomDomainDnsRecord(
+              api,
+              this.output.customDomain.zoneId,
+              this.output.customDomain.dnsRecordId,
+            );
+          }
+          await deleteCustomDomain(
+            api,
+            bucketName,
+            this.output.customDomain.domain,
+            props,
+          );
+          const result = await createCustomDomain(
+            api,
+            bucketName,
+            props.customDomain,
+            props,
+          );
+          const dnsRecordId = await createR2CustomDomainDnsRecord(
+            api,
+            props.customDomain.zoneId,
+            props.customDomain.domain,
+            bucketName,
+          );
+          customDomainResult = {
+            domain: result.domain,
+            zoneId: result.zoneId ?? props.customDomain.zoneId,
+            enabled: result.enabled,
+            minTLS: result.minTLS as R2BucketCustomDomain["minTLS"],
+            ciphers: result.ciphers,
+            status: result.status,
+            dnsRecordId,
+          };
+        } else if (this.output.customDomain) {
+          // Update existing custom domain
+          const result = await updateCustomDomain(
+            api,
+            bucketName,
+            props.customDomain.domain,
+            props.customDomain,
+            props,
+          );
+          // Ensure DNS record exists
+          const dnsRecordId = this.output.customDomain.dnsRecordId ?? await createR2CustomDomainDnsRecord(
+            api,
+            props.customDomain.zoneId,
+            props.customDomain.domain,
+            bucketName,
+          );
+          customDomainResult = {
+            domain: result.domain,
+            zoneId: result.zoneId ?? props.customDomain.zoneId,
+            enabled: result.enabled,
+            minTLS: result.minTLS as R2BucketCustomDomain["minTLS"],
+            ciphers: result.ciphers,
+            status: result.status,
+            dnsRecordId,
+          };
+        } else {
+          // Create new custom domain
+          const result = await createCustomDomain(
+            api,
+            bucketName,
+            props.customDomain,
+            props,
+          );
+          const dnsRecordId = await createR2CustomDomainDnsRecord(
+            api,
+            props.customDomain.zoneId,
+            props.customDomain.domain,
+            bucketName,
+          );
+          customDomainResult = {
+            domain: result.domain,
+            zoneId: result.zoneId ?? props.customDomain.zoneId,
+            enabled: result.enabled,
+            minTLS: result.minTLS as R2BucketCustomDomain["minTLS"],
+            ciphers: result.ciphers,
+            status: result.status,
+            dnsRecordId,
+          };
+        }
+      } else if (!props.customDomain && this.output.customDomain) {
+        // Custom domain removed from config, delete DNS record and custom domain
+        if (this.output.customDomain.dnsRecordId) {
+          await deleteR2CustomDomainDnsRecord(
+            api,
+            this.output.customDomain.zoneId,
+            this.output.customDomain.dnsRecordId,
+          );
+        }
+        await deleteCustomDomain(
+          api,
+          bucketName,
+          this.output.customDomain.domain,
+          props,
+        );
+        customDomainResult = undefined;
+      }
+
       return {
         ...this.output,
         allowPublicAccess,
@@ -729,6 +984,7 @@ const _R2Bucket = Resource(
         lifecycle: props.lifecycle,
         lock: props.lock,
         domain,
+        customDomain: customDomainResult,
       };
     }
   },
@@ -1337,4 +1593,214 @@ export async function disableDataCatalog(
     `/accounts/${api.accountId}/r2-catalog/${bucketName}/disable`,
     {},
   );
+}
+
+/**
+ * Response from custom domain API operations
+ */
+interface CustomDomainApiResponse {
+  domain: string;
+  enabled: boolean;
+  ciphers?: string[];
+  minTLS?: string;
+  status?: {
+    ownership?: string;
+    ssl?: string;
+  };
+  zoneId?: string;
+  zoneName?: string;
+}
+
+/**
+ * List custom domains configured for a bucket
+ */
+export async function listCustomDomains(
+  api: CloudflareApi,
+  bucketName: string,
+  props: BucketProps = {},
+): Promise<CustomDomainApiResponse[]> {
+  const response = await extractCloudflareResult<{
+    domains: CustomDomainApiResponse[];
+  }>(
+    `list custom domains for bucket "${bucketName}"`,
+    api.get(
+      `/accounts/${api.accountId}/r2/buckets/${bucketName}/domains/custom`,
+      { headers: withJurisdiction(props) },
+    ),
+  );
+  return response.domains ?? [];
+}
+
+/**
+ * Create a custom domain for a bucket
+ */
+export async function createCustomDomain(
+  api: CloudflareApi,
+  bucketName: string,
+  domain: R2BucketCustomDomain,
+  props: BucketProps = {},
+): Promise<CustomDomainApiResponse> {
+  return await extractCloudflareResult<CustomDomainApiResponse>(
+    `create custom domain "${domain.domain}" for bucket "${bucketName}"`,
+    api.post(
+      `/accounts/${api.accountId}/r2/buckets/${bucketName}/domains/custom`,
+      {
+        domain: domain.domain,
+        enabled: domain.enabled ?? true,
+        zoneId: domain.zoneId,
+        ...(domain.minTLS && { minTLS: domain.minTLS }),
+        ...(domain.ciphers && { ciphers: domain.ciphers }),
+      },
+      { headers: withJurisdiction(props) },
+    ),
+  );
+}
+
+/**
+ * Update a custom domain for a bucket
+ */
+export async function updateCustomDomain(
+  api: CloudflareApi,
+  bucketName: string,
+  domainName: string,
+  domain: R2BucketCustomDomain,
+  props: BucketProps = {},
+): Promise<CustomDomainApiResponse> {
+  return await extractCloudflareResult<CustomDomainApiResponse>(
+    `update custom domain "${domainName}" for bucket "${bucketName}"`,
+    api.put(
+      `/accounts/${api.accountId}/r2/buckets/${bucketName}/domains/custom/${domainName}`,
+      {
+        enabled: domain.enabled ?? true,
+        ...(domain.minTLS && { minTLS: domain.minTLS }),
+        ...(domain.ciphers && { ciphers: domain.ciphers }),
+      },
+      { headers: withJurisdiction(props) },
+    ),
+  );
+}
+
+/**
+ * Delete a custom domain from a bucket
+ */
+export async function deleteCustomDomain(
+  api: CloudflareApi,
+  bucketName: string,
+  domainName: string,
+  props: BucketProps = {},
+): Promise<void> {
+  try {
+    await extractCloudflareResult(
+      `delete custom domain "${domainName}" from bucket "${bucketName}"`,
+      api.delete(
+        `/accounts/${api.accountId}/r2/buckets/${bucketName}/domains/custom/${domainName}`,
+        { headers: withJurisdiction(props) },
+      ),
+    );
+  } catch (error) {
+    if (error instanceof CloudflareApiError && error.status === 404) {
+      return;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Create a DNS record for an R2 custom domain
+ * Creates a proxied CNAME record pointing to public.r2.dev
+ */
+export async function createR2CustomDomainDnsRecord(
+  api: CloudflareApi,
+  zoneId: string,
+  domain: string,
+  bucketName: string,
+): Promise<string> {
+  // First check if a DNS record already exists
+  const listResponse = await api.get(
+    `/zones/${zoneId}/dns_records?type=CNAME&name=${domain}`,
+  );
+  if (!listResponse.ok) {
+    throw new Error(
+      `Failed to check existing DNS records for ${domain}: ${listResponse.statusText}`,
+    );
+  }
+
+  const listResult = (await listResponse.json()) as any;
+  const existingRecord = listResult.result?.[0];
+
+  if (existingRecord) {
+    // Check if this is a read-only record (managed by Cloudflare R2)
+    const isReadOnly = existingRecord.meta?.read_only === true;
+    const isCorrectTarget = existingRecord.content === "public.r2.dev" && existingRecord.proxied === true;
+
+    if (isReadOnly && isCorrectTarget) {
+      // Record is already correctly configured by Cloudflare, just return its ID
+      return existingRecord.id;
+    }
+
+    if (isReadOnly) {
+      // Read-only record with wrong config - we can't modify it
+      throw new Error(
+        `DNS record for ${domain} is read-only and managed by Cloudflare. Cannot update it.`,
+      );
+    }
+
+    // Update existing record (only if not read-only)
+    const updateResponse = await api.put(
+      `/zones/${zoneId}/dns_records/${existingRecord.id}`,
+      {
+        type: "CNAME",
+        name: domain,
+        content: "public.r2.dev",
+        proxied: true,
+        ttl: 1,
+        comment: `R2 bucket: ${bucketName}`,
+      },
+    );
+
+    if (!updateResponse.ok) {
+      throw new Error(
+        `Failed to update DNS record for ${domain}: ${updateResponse.statusText}`,
+      );
+    }
+
+    return existingRecord.id;
+  }
+
+  // Create new record
+  const createResponse = await api.post(`/zones/${zoneId}/dns_records`, {
+    type: "CNAME",
+    name: domain,
+    content: "public.r2.dev",
+    proxied: true,
+    ttl: 1,
+    comment: `R2 bucket: ${bucketName}`,
+  });
+
+  if (!createResponse.ok) {
+    throw new Error(
+      `Failed to create DNS record for ${domain}: ${createResponse.statusText}`,
+    );
+  }
+
+  const createResult = (await createResponse.json()) as any;
+  return createResult.result.id;
+}
+
+/**
+ * Delete a DNS record for an R2 custom domain
+ */
+export async function deleteR2CustomDomainDnsRecord(
+  api: CloudflareApi,
+  zoneId: string,
+  recordId: string,
+): Promise<void> {
+  try {
+    const response = await api.delete(`/zones/${zoneId}/dns_records/${recordId}`);
+    if (!response.ok && response.status !== 404) {
+      logger.warn(`Failed to delete DNS record ${recordId}: ${response.statusText}`);
+    }
+  } catch (error) {
+    logger.warn(`Error deleting DNS record ${recordId}:`, error);
+  }
 }

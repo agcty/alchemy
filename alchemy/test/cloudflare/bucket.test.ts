@@ -7,6 +7,7 @@ import {
   getBucketLifecycleRules,
   getBucketLockRules,
   listBuckets,
+  listCustomDomains,
   listObjects,
   R2Bucket,
   withJurisdiction,
@@ -564,6 +565,98 @@ describe("R2 Bucket Resource", async () => {
       expect(getObj?.httpMetadata?.contentType).toEqual("application/json");
     } finally {
       await scope.finalize();
+    }
+  });
+
+  test("bucket with custom domain", async (scope) => {
+    const bucketName = `${BRANCH_PREFIX.toLowerCase()}-test-custom-domain`;
+    const customDomain = "r2-test.samscode.me";
+    const zoneId = process.env.CLOUDFLARE_ZONE_ID;
+
+    if (!zoneId) {
+      console.log("Skipping custom domain test - CLOUDFLARE_ZONE_ID not set");
+      return;
+    }
+
+    try {
+      let bucket = await R2Bucket(bucketName, {
+        name: bucketName,
+        adopt: true,
+        customDomain: {
+          domain: customDomain,
+          zoneId: zoneId,
+          enabled: true,
+          minTLS: "1.2",
+        },
+      });
+      expect(bucket.name).toEqual(bucketName);
+      expect(bucket.customDomain).toBeDefined();
+      expect(bucket.customDomain?.domain).toEqual(customDomain);
+      expect(bucket.customDomain?.zoneId).toEqual(zoneId);
+      expect(bucket.customDomain?.enabled).toEqual(true);
+      expect(bucket.customDomain?.minTLS).toEqual("1.2");
+      expect(bucket.customDomain?.dnsRecordId).toBeDefined();
+
+      // Verify the custom domain was created via API
+      await new Promise((r) => setTimeout(r, 1000));
+      const domains = await listCustomDomains(api, bucketName);
+      const foundDomain = domains.find((d) => d.domain === customDomain);
+      expect(foundDomain).toBeDefined();
+      expect(foundDomain?.enabled).toEqual(true);
+
+      // Verify DNS record was created
+      const dnsResponse = await api.get(
+        `/zones/${zoneId}/dns_records/${bucket.customDomain!.dnsRecordId}`,
+      );
+      expect(dnsResponse.ok).toBe(true);
+      const dnsData: any = await dnsResponse.json();
+      expect(dnsData.result.type).toEqual("CNAME");
+      expect(dnsData.result.content).toEqual("public.r2.dev");
+      expect(dnsData.result.proxied).toEqual(true);
+
+      // Update custom domain settings
+      bucket = await R2Bucket(bucketName, {
+        name: bucketName,
+        adopt: true,
+        customDomain: {
+          domain: customDomain,
+          zoneId: zoneId,
+          enabled: false,
+          minTLS: "1.3",
+        },
+      });
+      expect(bucket.customDomain?.enabled).toEqual(false);
+      expect(bucket.customDomain?.minTLS).toEqual("1.3");
+      expect(bucket.customDomain?.dnsRecordId).toBeDefined();
+
+      // Verify the custom domain was updated
+      await new Promise((r) => setTimeout(r, 1000));
+      const updatedDomains = await listCustomDomains(api, bucketName);
+      const updatedDomain = updatedDomains.find((d) => d.domain === customDomain);
+      expect(updatedDomain).toBeDefined();
+      expect(updatedDomain?.enabled).toEqual(false);
+
+      // Remove custom domain
+      bucket = await R2Bucket(bucketName, {
+        name: bucketName,
+        adopt: true,
+      });
+      expect(bucket.customDomain).toBeUndefined();
+
+      // Verify the custom domain was deleted
+      await new Promise((r) => setTimeout(r, 1000));
+      const finalDomains = await listCustomDomains(api, bucketName);
+      const deletedDomain = finalDomains.find((d) => d.domain === customDomain);
+      expect(deletedDomain).toBeUndefined();
+
+      // Verify DNS record was deleted
+      const deletedDnsResponse = await api.get(
+        `/zones/${zoneId}/dns_records?name=${customDomain}`,
+      );
+      const deletedDnsData: any = await deletedDnsResponse.json();
+      expect(deletedDnsData.result.length).toEqual(0);
+    } finally {
+      await destroy(scope);
     }
   });
 });
