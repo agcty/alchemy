@@ -196,7 +196,7 @@ export const NeonRole = Resource(
         }
 
         // Roles don't have an update endpoint, so we return the current state
-        // The protected flag is immutable after creation
+        // The noLogin flag is immutable after creation
         return this.output;
       }
     }
