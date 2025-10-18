@@ -38,6 +38,23 @@ const db = await Hyperdrive("my-postgres-db", {
 });
 ```
 
+## Local Development Only
+
+For local-first development when you don't have production credentials yet, you can omit the `origin` property and only provide `dev.origin`. This matches the wrangler.jsonc pattern where you can use a local connection string without needing a real Hyperdrive ID.
+
+```ts
+const db = await Hyperdrive("my-postgres-db", {
+  name: "my-postgres-db",
+  dev: {
+    origin: "postgres://postgres:postgres@localhost:5432/postgres",
+  },
+});
+```
+
+:::caution
+When you're ready to deploy to production, you'll need to add the `origin` property with your production database connection. Alchemy will throw a helpful error if you try to deploy without it.
+:::
+
 ## With Explicit Origin Object
 
 If you'd prefer to set parameters explicitly, you can use an object.

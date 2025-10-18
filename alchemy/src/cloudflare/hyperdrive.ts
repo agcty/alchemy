@@ -151,8 +151,11 @@ export interface HyperdriveProps extends CloudflareApiOptions {
 
   /**
    * Database connection origin configuration
+   *
+   * Optional in local mode - if not provided, dev.origin will be used.
+   * Required for production deployments.
    */
-  origin: HyperdriveOriginInput;
+  origin?: HyperdriveOriginInput;
 
   /**
    * Caching configuration
@@ -311,13 +314,30 @@ export async function Hyperdrive(
   id: string,
   props: HyperdriveProps,
 ): Promise<Hyperdrive> {
-  const origin = normalizeHyperdriveOrigin(props.origin);
+  // In local mode, origin can be omitted if dev.origin is provided
+  const devOrigin = props.dev?.origin;
+  const productionOrigin = props.origin;
+
+  if (!Scope.current.local && !productionOrigin) {
+    throw new Error(
+      `Hyperdrive "${id}" requires 'origin' for production deployment. ` +
+        `Add the production database connection to enable deployment.\n\n` +
+        `For local development only, you can omit 'origin' and only provide 'dev.origin'.`,
+    );
+  }
+
+  // Use dev.origin as fallback if origin is not provided (local mode only)
+  const origin = productionOrigin
+    ? normalizeHyperdriveOrigin(productionOrigin)
+    : normalizeHyperdriveOrigin(devOrigin!);
+
   const dev = {
     origin: toConnectionString(
-      normalizeHyperdriveOrigin(props.dev?.origin ?? origin),
+      normalizeHyperdriveOrigin(devOrigin ?? productionOrigin!),
     ),
     force: Scope.current.local,
   };
+
   return await _Hyperdrive(id, {
     ...props,
     origin,
