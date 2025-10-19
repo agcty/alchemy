@@ -31,6 +31,7 @@ const file = await File("config", { path: "./config.json", content: "{}" });
 ```
 
 State directory structure:
+
 ```
 .alchemy/
   my-app/  # Application scope
@@ -58,6 +59,90 @@ const database = await Database("main", { /* props */ });
     prod/  ## Stage scope
       main.json
 ```
+
+### Understanding `local` vs `stage`
+
+Alchemy separates two independent concepts that are often confused:
+
+- **`local`**: Whether resources run locally (on your machine) or remotely (in production/cloud)
+- **`stage`**: A label for different environments (dev, staging, prod, e2e, pr-123, etc.)
+
+These properties are **completely independent** - you can be in local mode with any stage name.
+
+:::caution[Avoid Using Environment Variables for Stages]
+Don't use environment variables like `E2E_MODE=true` to mimic stages. This bypasses Alchemy's state isolation and can cause resource conflicts. Instead, use the built-in `--stage` flag:
+
+```bash
+# ❌ Don't do this
+E2E_MODE=true bun alchemy dev
+
+# ✅ Do this instead
+bun alchemy dev --stage e2e
+```
+
+:::
+
+#### CLI Usage
+
+You can run local development with either `bun alchemy dev` (the common command) or `bun alchemy.run.ts --dev` (explicit). Below examples use the short `dev` form:
+
+```bash
+# Local development (default stage uses your username)
+bun alchemy dev
+# → app.local = true, app.stage = "dev" (or $USER)
+
+# Local E2E testing
+bun alchemy dev --stage e2e
+# → app.local = true, app.stage = "e2e"
+
+# Local staging environment
+bun alchemy dev --stage staging
+# → app.local = true, app.stage = "staging"
+
+# Production deployment (no 'dev' or --dev flag)
+bun alchemy.run.ts --stage prod
+# → app.local = false, app.stage = "prod"
+```
+
+#### State Isolation
+
+Each stage gets its own state file, allowing multiple environments to coexist without conflicts:
+
+```
+.alchemy/
+  my-app.dev.json      # Local dev stage
+  my-app.e2e.json      # Local E2E stage
+  my-app.staging.json  # Could be local or remote
+  my-app.prod.json     # Usually remote/production
+```
+
+#### Common Pattern
+
+Use both properties together to conditionally configure resources:
+
+```typescript
+const app = await alchemy("my-app");
+
+if (app.local && app.stage === "e2e") {
+  // Fast ephemeral setup for tests (e.g., in-memory database)
+  const db = await setupInMemoryDatabase();
+} else if (app.local) {
+  // Local development with persistence (e.g., Docker)
+  const db = await setupDockerDatabase();
+} else {
+  // Production cloud resources (e.g., managed database service)
+  const db = await setupCloudDatabase();
+}
+
+await app.finalize();
+```
+
+This pattern is especially useful for:
+
+- Running different infrastructure locally vs production
+- Using lightweight alternatives for testing
+- Managing multiple local environments simultaneously
+- Avoiding resource conflicts during concurrent development
 
 ## Resource Scope
 
@@ -134,7 +219,7 @@ await Bucket("assets", {});
 await app.finalize(); // Manual finalization
 ```
 
-Application scopes need manual finalization, but nested scopes finalize automatically when their execution completes. 
+Application scopes need manual finalization, but nested scopes finalize automatically when their execution completes.
 
 ## Test Scope
 
