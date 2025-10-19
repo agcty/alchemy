@@ -473,12 +473,22 @@ async function updateZoneSettings(
     minTlsVersion: "min_tls_version",
   };
 
+  // Fetch current settings to avoid unnecessary updates
+  const currentSettings = await getZoneSettings(api, zoneId);
+
   await Promise.all(
     Object.entries(settings)
       .filter(([_, value]) => value !== undefined)
       .map(async ([key, value]) => {
         const settingId = settingsMap[key as keyof typeof settings];
         if (!settingId) return;
+
+        // Check if the setting is already at the desired value
+        const currentValue =
+          currentSettings[key as keyof typeof currentSettings];
+        if (currentValue === value) {
+          return;
+        }
 
         const response = await api.patch(
           `/zones/${zoneId}/settings/${settingId}`,
@@ -489,10 +499,32 @@ async function updateZoneSettings(
 
         if (!response.ok) {
           const data = await response.text();
-          if (response.status === 400 && data.includes("already enabled")) {
-            logger.warn(`Warning: Setting '${key}' already enabled`);
-            return;
+
+          // Handle various error scenarios gracefully
+          if (response.status === 400) {
+            // Some settings may be read-only or already in the desired state
+            if (
+              data.includes("already enabled") ||
+              data.includes("cannot be changed")
+            ) {
+              logger.warn(`Setting '${key}' cannot be updated: ${data}`);
+              return;
+            }
+
+            // Parse error for better messaging
+            try {
+              const errorData = JSON.parse(data);
+              const errorMessage = errorData.errors?.[0]?.message || data;
+              logger.warn(`Failed to update setting '${key}': ${errorMessage}`);
+              return;
+            } catch {
+              // If we can't parse the error, log the raw response
+              logger.warn(`Failed to update setting '${key}': ${data}`);
+              return;
+            }
           }
+
+          // For non-400 errors, throw to fail the operation
           throw new Error(
             `Failed to update zone setting ${key}: ${response.statusText}`,
           );
