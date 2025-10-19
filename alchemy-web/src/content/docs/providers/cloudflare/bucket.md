@@ -70,15 +70,29 @@ This enables the `r2.dev` domain for the bucket. This URL is rate-limited and no
 Serve bucket content through your own domain with automatic DNS configuration:
 
 ```ts
-import { R2Bucket } from "alchemy/cloudflare";
+import { R2Bucket, Zone } from "alchemy/cloudflare";
+
+// Option 1: Using a Zone resource (domain can be derived from zone)
+const zone = await Zone("my-zone", { name: "example.com" });
 
 const cdnBucket = await R2Bucket("cdn-assets", {
   name: "cdn-assets",
   customDomain: {
-    domain: "cdn.example.com",
-    zoneId: "your-zone-id", // Cloudflare Zone ID
+    domain: "cdn.example.com", // Optional when using Zone resource
+    zone: zone, // Pass the Zone resource directly
     enabled: true,
     minTLS: "1.2", // Minimum TLS version (1.0, 1.1, 1.2, 1.3)
+  },
+});
+
+// Option 2: Using a zone ID string (domain is required)
+const cdnBucket2 = await R2Bucket("cdn-assets-2", {
+  name: "cdn-assets-2",
+  customDomain: {
+    domain: "cdn2.example.com", // Required when using zone ID string
+    zone: "your-zone-id", // Cloudflare Zone ID as string
+    enabled: true,
+    minTLS: "1.2",
   },
 });
 
@@ -92,6 +106,8 @@ The custom domain feature:
 - Handles DNS record cleanup when the custom domain is removed
 - Supports TLS configuration and cipher suite customization
 - Provides ownership verification and SSL certificate status
+- Accepts either a Zone resource or zone ID string for the `zone` property
+- When using a Zone resource, the `domain` can be derived from the zone's name if not explicitly provided
 
 ## With CORS
 
