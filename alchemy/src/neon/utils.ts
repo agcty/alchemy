@@ -36,7 +36,7 @@ export function formatConnectionUri(
   };
 }
 
-export interface NeonRole {
+export interface NeonRoleData {
   /**
    * The ID of the branch to which the role belongs
    */
@@ -63,10 +63,33 @@ export interface NeonRole {
   updated_at: string;
 }
 
-export function formatRole(role: neon.Role): NeonRole {
+export function formatRole(role: neon.Role): NeonRoleData {
   return {
     ...role,
     password: role.password ? new Secret(role.password) : undefined,
+  };
+}
+
+/**
+ * Creates a connection URI from individual components.
+ * Used when constructing connection URIs for a specific role.
+ */
+export function createConnectionUri(
+  host: string,
+  database: string,
+  roleName: string,
+  password: string,
+): NeonConnectionUri {
+  const connectionString = `postgresql://${roleName}:${password}@${host}/${database}?sslmode=require`;
+  return {
+    connection_uri: new Secret(connectionString),
+    connection_parameters: {
+      database,
+      host,
+      port: 5432,
+      user: roleName,
+      password: new Secret(password),
+    },
   };
 }
 

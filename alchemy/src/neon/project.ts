@@ -7,7 +7,7 @@ import {
   formatRole,
   waitForOperations,
   type NeonConnectionUri,
-  type NeonRole,
+  type NeonRoleData,
 } from "./utils.ts";
 
 /**
@@ -137,7 +137,7 @@ export interface NeonProject {
   /**
    * Database roles created with the project
    */
-  roles: [NeonRole, ...NeonRole[]];
+  roles: [NeonRoleData, ...NeonRoleData[]];
 
   /**
    * Databases created with the project
@@ -244,7 +244,10 @@ export const NeonProject = Resource(
             NeonConnectionUri,
             ...NeonConnectionUri[],
           ],
-          roles: data.roles.map(formatRole) as [NeonRole, ...NeonRole[]],
+          roles: data.roles.map(formatRole) as [
+            NeonRoleData,
+            ...NeonRoleData[],
+          ],
           databases: data.databases as [neon.Database, ...neon.Database[]],
           branch,
           endpoints: endpoints as [neon.Endpoint, ...neon.Endpoint[]],

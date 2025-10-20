@@ -43,9 +43,16 @@ describe("NeonRole Resource", () => {
         noLogin: false,
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
+        connectionUris: expect.any(Array),
       });
       expect(role.password.unencrypted).toBeDefined();
       expect(typeof role.password.unencrypted).toBe("string");
+      expect(role.connectionUris.length).toBeGreaterThan(0);
+      expect(role.connectionUris[0].connection_uri.unencrypted).toContain(
+        "postgresql://",
+      );
+      expect(role.connectionUris[0].connection_parameters.user).toBe(role.name);
+      expect(role.connectionUris[0].connection_parameters.port).toBe(5432);
 
       // Update should return the same state
       const updatedRole = await NeonRole("role", {

@@ -4,7 +4,11 @@ import { Resource } from "../resource.ts";
 import { createNeonApi, type NeonApiOptions } from "./api.ts";
 import type { NeonBranch } from "./branch.ts";
 import type { NeonProject } from "./project.ts";
-import { waitForOperations } from "./utils.ts";
+import {
+  createConnectionUri,
+  waitForOperations,
+  type NeonConnectionUri,
+} from "./utils.ts";
 
 export interface NeonRoleProps extends NeonApiOptions {
   /**
@@ -29,7 +33,7 @@ export interface NeonRoleProps extends NeonApiOptions {
   noLogin?: boolean;
 }
 
-export type NeonRole = Omit<NeonRoleProps, "project"> & {
+export type NeonRole = Omit<NeonRoleProps, "project" | "branch"> & {
   /**
    * The role name
    */
@@ -58,6 +62,11 @@ export type NeonRole = Omit<NeonRoleProps, "project"> & {
    * A timestamp indicating when the role was last updated
    */
   updatedAt: Date;
+  /**
+   * The connection URIs for the role.
+   * Generated from the branch's endpoints and databases.
+   */
+  connectionUris: NeonConnectionUri[];
 };
 
 /**
@@ -158,15 +167,49 @@ export const NeonRole = Resource(
           },
         });
 
+        // Fetch endpoints and databases for the branch to generate connection URIs
+        const [endpointsRes, databasesRes] = await Promise.all([
+          api.listProjectBranchEndpoints({
+            path: {
+              project_id: projectId,
+              branch_id: branchId,
+            },
+          }),
+          api.listProjectBranchDatabases({
+            path: {
+              project_id: projectId,
+              branch_id: branchId,
+            },
+          }),
+        ]);
+
+        // Generate connection URIs for each endpoint × database combination
+        const connectionUris: NeonConnectionUri[] = [];
+        const password = passwordRes.data.password;
+        for (const endpoint of endpointsRes.data.endpoints) {
+          if (endpoint.host) {
+            for (const database of databasesRes.data.databases) {
+              connectionUris.push(
+                createConnectionUri(
+                  endpoint.host,
+                  database.name,
+                  data.role.name,
+                  password,
+                ),
+              );
+            }
+          }
+        }
+
         return {
           name: data.role.name,
           projectId,
           branchId,
-          branch: props.branch,
-          password: new Secret(passwordRes.data.password),
+          password: new Secret(password),
           noLogin: props.noLogin ?? false,
           createdAt: new Date(data.role.created_at),
           updatedAt: new Date(data.role.updated_at),
+          connectionUris,
         };
       }
       case "update": {
@@ -178,8 +221,8 @@ export const NeonRole = Resource(
           this.replace();
         }
 
-        // Roles don't have an update endpoint, so we return the current state
-        // The noLogin flag is immutable after creation
+        // Roles don't have an update endpoint, so return current state
+        // The connectionUris are already in this.output from creation
         return this.output;
       }
     }

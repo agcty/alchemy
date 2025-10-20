@@ -8,7 +8,7 @@ import {
   formatRole,
   waitForOperations,
   type NeonConnectionUri,
-  type NeonRole,
+  type NeonRoleData,
 } from "./utils.ts";
 
 export interface NeonBranchProps extends NeonApiOptions {
@@ -139,7 +139,7 @@ export interface NeonBranch {
   /**
    * The roles for the branch.
    */
-  roles: NeonRole[];
+  roles: NeonRoleData[];
   /**
    * The connection URIs for the branch.
    */
