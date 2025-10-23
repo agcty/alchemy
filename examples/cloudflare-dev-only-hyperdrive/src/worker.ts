@@ -23,6 +23,8 @@ export default {
       console.error("Database error:", error.message);
 
       return new Response("Internal error occurred", { status: 500 });
+    } finally {
+      await client.end();
     }
   },
 };
