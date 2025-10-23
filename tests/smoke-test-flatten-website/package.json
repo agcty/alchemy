@@ -17,7 +17,7 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
-    "alchemy": "workspace:*",
+    "alchemy": "0.62.2",
     "@cloudflare/vite-plugin": "^1.7.4",
     "@cloudflare/workers-types": "^4.20250805.0",
     "miniflare": "^4.20250617.3",
